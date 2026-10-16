@@ -2011,7 +2011,40 @@ Respond ONLY with valid JSON.''';
       return _parseNmapText(output, address);
     }
 
+    // --- ping output parser ---
+    // Previously ping output with no explicit baseline handling fell through
+    // to the generic LLM extraction prompt, which had no packet-loss-specific
+    // field/instruction. The model then had to interpret raw ICMP output
+    // itself and could get the reachability sense backwards (e.g. reporting
+    // "0% packet loss" — meaning the host IS reachable — as "unreachable").
+    // Parsing packet loss % deterministically removes that ambiguity.
+    if (cmdLower.trim().startsWith('ping ') || cmdLower.contains(' ping ')) {
+      final parsed = _parsePingOutput(output, address);
+      if (parsed != null) return parsed;
+    }
+
     return null; // Unknown format — fall back to LLM
+  }
+
+  /// Deterministically parses `ping` output for packet loss / reachability,
+  /// avoiding LLM misinterpretation of raw ICMP statistics.
+  Map<String, dynamic>? _parsePingOutput(String output, String address) {
+    final match = RegExp(r'(\d+(?:\.\d+)?)\s*%\s*packet loss')
+        .firstMatch(output.toLowerCase());
+    if (match == null) return null;
+    final lossPct = double.tryParse(match.group(1)!);
+    if (lossPct == null) return null;
+    return {
+      'other_findings': [
+        {
+          'type': 'ping_reachability',
+          'data': {
+            'reachable': lossPct < 100,
+            'packet_loss_pct': lossPct,
+          },
+        },
+      ],
+    };
   }
 
   /// Phase 1.1: Returns true when command output contains no actionable data
