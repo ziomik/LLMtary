@@ -253,7 +253,10 @@ class _MainScreenState extends State<MainScreen> {
             child: const Icon(Icons.security, color: Colors.white, size: 18),
           ),
           const SizedBox(width: 10),
-          _BungeeSpiceText('LLMtary', fontSize: 16),
+          const Tooltip(
+            message: 'Patched with love by Ziomik & Hydra 🤖',
+            child: _BungeeSpiceText('LLMtary', fontSize: 16),
+          ),
           const SizedBox(width: 28),
           // Tab bar
           Flexible(
