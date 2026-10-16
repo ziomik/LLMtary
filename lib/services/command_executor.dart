@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'dart:async';
 import 'dart:convert';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import '../models/llm_settings.dart';
 import '../database/database_helper.dart';
 import '../utils/json_parser.dart';
@@ -1505,6 +1507,46 @@ Respond ONLY with valid JSON:
   /// Global command timeout. Generous to accommodate any tool the LLM chooses.
   static const Duration _commandTimeout = Duration(minutes: 30);
 
+  /// Idle-output watchdog: if a command produces NO stdout/stderr at all for
+  /// this long, it is almost certainly network-hung (connected but the target
+  /// never responds, DNS stall, etc.) rather than doing legitimate quiet work.
+  /// Observed in practice: katana, httpx (even with an explicit -timeout flag
+  /// in the command itself) and nuclei all hung at 0% CPU for 3-12 minutes
+  /// with zero output before a human had to kill them manually — prompt-level
+  /// rules telling the LLM to "always pass -timeout" do not help when the
+  /// hang happens below the tool's own timeout handling (e.g. a TCP connect
+  /// that succeeds but never gets a response). Kept deliberately generous
+  /// (vs. the 30-minute hard cap above) so a tool that is genuinely quiet for
+  /// a while (compiling nuclei templates, scanning a large wordlist, slow DNS)
+  /// is not falsely killed. This is a *second*, independent safety net, not a
+  /// replacement for _commandTimeout.
+  static const Duration _idleOutputTimeout = Duration(seconds: 150);
+
+  /// Appends one JSONL record per idle-timeout kill (tool name, seconds of
+  /// silence, truncated command) to idle_kills.jsonl alongside the app's
+  /// other data files. Deliberately not logged to the DB/UI — this is raw
+  /// data for tuning _idleOutputTimeout against real tool behavior, not a
+  /// user-facing finding. Failures here are swallowed: logging must never
+  /// be the reason a command result is lost.
+  static Future<void> _logIdleKill(String command, int silentSeconds) async {
+    try {
+      final appDir = await getApplicationSupportDirectory();
+      final logPath = p.join(appDir.path, 'idle_kills.jsonl');
+      final parts = command.trim().split(RegExp(r'\s+'));
+      final tool = parts.isNotEmpty ? parts.first : 'unknown';
+      final truncated = command.length > 200 ? '${command.substring(0, 200)}...' : command;
+      final record = jsonEncode({
+        'timestamp': DateTime.now().toIso8601String(),
+        'tool': tool,
+        'silentSeconds': silentSeconds,
+        'command': truncated,
+      });
+      await File(logPath).writeAsString('$record\n', mode: FileMode.append);
+    } catch (_) {
+      // Non-fatal — tuning data only, never block the actual command result.
+    }
+  }
+
   /// Write (or overwrite) a thin sudo wrapper at a fixed path in /tmp so that
   /// Quote [s] as a single POSIX shell token, safe against injection: wrap in
   /// single quotes and escape embedded single quotes as '\''. Used wherever an
@@ -1777,11 +1819,32 @@ Respond ONLY with valid JSON:
       bool killed = false;
       String? killReason;
       final recentLines = <String>[];
+      var lastOutputAt = DateTime.now();
+
+      // Idle-output watchdog (see _idleOutputTimeout doc comment above): checked
+      // on a short interval so a hang is caught within ~10s of crossing the
+      // threshold instead of waiting for the full 30-minute hard cap below.
+      final idleWatchdog = Timer.periodic(const Duration(seconds: 10), (timer) {
+        if (killed) {
+          timer.cancel();
+          return;
+        }
+        final silentFor = DateTime.now().difference(lastOutputAt);
+        if (silentFor > _idleOutputTimeout) {
+          killed = true;
+          killReason = 'idle-timeout: no output for ${silentFor.inSeconds}s '
+              '(likely network-hung: connected but target never responded)';
+          timer.cancel();
+          _logIdleKill(command, silentFor.inSeconds);
+          _killProcessTree(process!);
+        }
+      });
 
       final decoder = Utf8Decoder(allowMalformed: true);
 
       final outSub = process.stdout.transform(decoder).listen((data) {
         if (killed) return;
+        lastOutputAt = DateTime.now();
         final sanitized = OutputSanitizer.sanitize(data);
         totalBytes += sanitized.length;
         final lines = sanitized.split('\n');
@@ -1811,6 +1874,7 @@ Respond ONLY with valid JSON:
 
       final errSub = process.stderr.transform(decoder).listen((data) {
         if (killed) return;
+        lastOutputAt = DateTime.now();
         final sanitized = OutputSanitizer.sanitize(data);
         totalBytes += sanitized.length;
         if (totalBytes > _maxOutputBytes) {
@@ -1823,19 +1887,25 @@ Respond ONLY with valid JSON:
         stderrBuffer.write(sanitized);
       });
 
-      final exitCode = await process.exitCode.timeout(_commandTimeout);
-      // A2: drain any buffered stdout/stderr before reading the buffers (the last
-      // lines — often the proof of success — can still be in flight at exit), then
-      // cancel the subscriptions to avoid leaks.
-      await Future.wait([outSub.asFuture<void>(), errSub.asFuture<void>()])
-          .timeout(const Duration(seconds: 5), onTimeout: () => const <void>[]);
-      await outSub.cancel();
-      await errSub.cancel();
-      if (killed) {
-        return CommandResult(-1, stdoutBuffer.toString(),
-            'KILLED: $killReason. The command was producing excessive or repetitive output and was terminated.');
+      try {
+        final exitCode = await process.exitCode.timeout(_commandTimeout);
+        // A2: drain any buffered stdout/stderr before reading the buffers (the last
+        // lines — often the proof of success — can still be in flight at exit), then
+        // cancel the subscriptions to avoid leaks.
+        await Future.wait([outSub.asFuture<void>(), errSub.asFuture<void>()])
+            .timeout(const Duration(seconds: 5), onTimeout: () => const <void>[]);
+        await outSub.cancel();
+        await errSub.cancel();
+        if (killed) {
+          final reason = killReason ?? 'unknown';
+          final isIdle = reason.startsWith('idle-timeout');
+          return CommandResult(-1, stdoutBuffer.toString(),
+              'KILLED: $reason. ${isIdle ? 'The command was terminated after producing no output for this long. This is usually a network hang (connected but the target never responded), but some tools are legitimately silent for a while (loading large templates/wordlists, slow DNS). If this tool can genuinely take a long time with no output, retry with an explicit verbose/progress flag or a shorter, more targeted scope (smaller wordlist, narrower options); otherwise try a different tool or approach instead of repeating the identical command.' : 'The command was producing excessive or repetitive output and was terminated.'}');
+        }
+        return CommandResult(exitCode, stdoutBuffer.toString(), stderrBuffer.toString());
+      } finally {
+        idleWatchdog.cancel();
       }
-      return CommandResult(exitCode, stdoutBuffer.toString(), stderrBuffer.toString());
     } on TimeoutException {
       if (process != null) await _killProcessTree(process);
       return CommandResult(-1, "", "Command timed out.");
