@@ -1925,6 +1925,15 @@ Extract EVERY piece of information useful for later vulnerability analysis.
 Be thorough — capture version numbers, banners, headers, paths, usernames, share names, record values, config details.
 Only include keys that have real data from this output (omit empty arrays/objects).
 
+CRITICAL — NO GUESSING ON SCALAR FIELDS: For every scalar field in the schema below
+(os_version, hostname, mac, uptime, product, version, banner, etc.), only fill it in
+if that EXACT value appears literally in the output above. If the value is not
+literally present, leave the field as an empty string or omit the key entirely —
+never infer, extrapolate, or recall a plausible-looking value from general/training
+knowledge. Example: input contains only "OS: Linux" (no kernel/build string) ->
+os_version must be "" (NOT a guessed string like "5.15.0-xx-generic"). A wrong
+guess is worse than an empty field.
+
 CRITICAL FOR NMAP OUTPUT: The nmap output may contain 20+ open ports. You MUST extract ALL of them into open_ports[]. Do NOT stop after the first port. Scan the ENTIRE output for every line matching "PORT/tcp open" or "PORT/udp open" and include each one.
 
 CRITICAL FOR VERSION EXTRACTION:
@@ -2066,10 +2075,10 @@ Respond ONLY with valid JSON.''';
 
     // Device block — always included
     sections.add('''  "device": {
-    "os": "full OS string",
-    "os_version": "version",
-    "hostname": "hostname",
-    "mac": "MAC address",
+    "os": "full OS string, ONLY if literally present in output, else \"\"",
+    "os_version": "version, ONLY if a literal kernel/build string is present in output (e.g. '5.15.0-123-generic'), NEVER guessed from a generic 'OS: Linux' line, else \"\"",
+    "hostname": "hostname, ONLY if literally present in output, else \"\"",
+    "mac": "MAC address, ONLY if literally present in output, else \"\"",
     "uptime": "uptime if shown"
   }''');
 
