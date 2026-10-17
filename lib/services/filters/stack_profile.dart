@@ -33,20 +33,34 @@ class StackProfile {
   final String os;
 
   /// Rough count of distinct evidence used to build the profile (open ports +
-  /// detected technologies). Drives [solid].
+  /// detected technologies).
   final int signalStrength;
+
+  /// Number of open ports that carried a service/banner/version fingerprint
+  /// (e.g. from nmap -sV). Bare port numbers do NOT count.
+  final int fingerprintedPorts;
+
+  /// Number of detected web technologies (headers/CNAME/tech list).
+  final int technologyCount;
 
   const StackProfile({
     required this.present,
     required this.os,
     required this.signalStrength,
+    this.fingerprintedPorts = 0,
+    this.technologyCount = 0,
   });
 
   bool has(StackAxis axis) => present.contains(axis);
 
   /// Whether the profile has enough signal to justify a categorical hard-drop.
-  /// Thin recon ⇒ not solid ⇒ the filter stays permissive (no categorical drop).
-  bool get solid => os.isNotEmpty || signalStrength >= 3;
+  ///
+  /// Requires actual SERVICE-LEVEL evidence (fingerprinted ports or detected
+  /// technologies), not bare port numbers: a service may sit on a non-standard
+  /// port, so "the standard port wasn't seen" is NOT sufficient grounds to
+  /// conclude a platform is absent. A ports-only scan (no -sV) ⇒ not solid ⇒
+  /// the filter stays permissive (deprioritize, never hard-drop).
+  bool get solid => fingerprintedPorts >= 1 || technologyCount >= 1;
 
   // ---- detection tables (lower-case) ----
   static const _winAdPorts = {88, 389, 636, 464, 3268, 3269, 5985, 5986, 139};
@@ -103,6 +117,7 @@ class StackProfile {
     final fullText = d.toString().toLowerCase();
 
     int portCount = 0;
+    int fingerprinted = 0;
     for (final raw in ports) {
       if (raw is! Map) continue;
       portCount++;
@@ -113,9 +128,15 @@ class StackProfile {
       final banner = (raw['banner'] ?? raw['version'] ?? raw['product'] ?? '')
           .toString()
           .toLowerCase();
+      if (service.isNotEmpty || banner.isNotEmpty) fingerprinted++;
 
+      // Service FINGERPRINT (nmap -sV service name or banner) is the PRIMARY
+      // signal and is port-independent — Kerberos on a non-standard port is
+      // still detected via its service/banner. The standard port is only a
+      // weak additional hint, never the sole condition.
       void mark(StackAxis axis, Set<int> p, Set<String> s) {
-        if (p.contains(port) || s.any((x) => service.contains(x))) {
+        if (s.any((x) => service.contains(x) || banner.contains(x)) ||
+            p.contains(port)) {
           present.add(axis);
         }
       }
@@ -159,6 +180,8 @@ class StackProfile {
       present: present,
       os: os,
       signalStrength: portCount + techCount,
+      fingerprintedPorts: fingerprinted,
+      technologyCount: techCount,
     );
   }
 }

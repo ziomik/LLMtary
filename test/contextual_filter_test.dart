@@ -242,4 +242,43 @@ void main() {
           FilterDecision.keep);
     });
   });
+
+  // Service FINGERPRINT is primary, port number is only a weak hint: a service
+  // on a non-standard port is still detected; a ports-only scan (no -sV) must
+  // not hard-drop, because "standard port absent" doesn't prove the service is.
+  group('fingerprint primary, port weak hint', () {
+    test('Kerberos on a NON-standard port is detected by service name', () {
+      final ad = StackProfile.fromDeviceJson(
+          '{"os":"Linux","open_ports":[{"port":2088,"service":"kerberos-sec"}]}');
+      expect(ad.has(StackAxis.windowsAd), isTrue);
+      expect(
+          ApplicabilityFilter.decide(
+                  text: 'Kerberoasting over internet-facing Kerberos',
+                  confidence: 'LOW',
+                  stack: ad)
+              .decision,
+          FilterDecision.keep);
+    });
+
+    test('platform detected from a banner even with a generic service field', () {
+      final ad = StackProfile.fromDeviceJson(
+          '{"os":"Linux","open_ports":[{"port":12345,"service":"unknown",'
+          '"banner":"Microsoft Windows Active Directory LDAP"}]}');
+      expect(ad.has(StackAxis.windowsAd), isTrue);
+    });
+
+    test('bare ports-only scan is not solid → deprioritize, never hard-drop', () {
+      // Open ports with NO service/banner (no -sV). Even without the standard
+      // AD ports, we must not conclude AD is absent.
+      final bare = StackProfile.fromDeviceJson(
+          '{"os":"Linux","open_ports":[{"port":443},{"port":8080},{"port":9999}]}');
+      expect(bare.solid, isFalse);
+      final o = ApplicabilityFilter.decide(
+          text: 'DCSync over internet-facing Kerberos',
+          confidence: 'LOW',
+          stack: bare);
+      expect(o.decision, FilterDecision.deprioritize);
+      expect(o.applicability, Applicability.uncertain);
+    });
+  });
 }
