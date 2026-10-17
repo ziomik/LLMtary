@@ -1,6 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:llmtary/models/vulnerability.dart';
 import 'package:llmtary/services/filters/stack_profile.dart';
 import 'package:llmtary/services/filters/applicability_filter.dart';
+import 'package:llmtary/services/vulnerability_analyzer.dart';
 
 /// A southfront.press-like stack: WordPress + nginx + PHP + mailcow on Linux.
 const _southfrontDevice = '''
@@ -150,6 +152,34 @@ void main() {
       // Not dropped — thin recon must not hard-drop.
       expect(o.decision, FilterDecision.deprioritize);
       expect(o.applicability, Applicability.uncertain);
+    });
+  });
+
+  group('VulnerabilityAnalyzer.applyContextualFilter wiring', () {
+    Vulnerability vuln(String problem, String conf) => Vulnerability(
+          problem: problem,
+          description: '',
+          severity: 'MEDIUM',
+          confidence: conf,
+          evidence: '',
+          recommendation: '',
+        );
+
+    test('drops foreign LOW, keeps applicable, POP3 trap, and HIGH foreign', () {
+      final analyzer = VulnerabilityAnalyzer();
+      final vulns = [
+        vuln('DCSync over internet-facing Kerberos', 'LOW'), // dropped
+        vuln('WordPress XML-RPC Credential Attack', 'LOW'), // kept
+        vuln('Externally Exposed POP3 Service', 'LOW'), // kept (trap)
+        vuln('Exposed Docker API', 'HIGH'), // kept (contradiction, never dropped)
+      ];
+      final kept =
+          analyzer.applyContextualFilter(vulns, _southfrontDevice).map((v) => v.problem).toSet();
+      expect(kept, isNot(contains('DCSync over internet-facing Kerberos')));
+      expect(kept, contains('WordPress XML-RPC Credential Attack'));
+      expect(kept, contains('Externally Exposed POP3 Service'));
+      expect(kept, contains('Exposed Docker API'));
+      expect(kept.length, 3);
     });
   });
 }

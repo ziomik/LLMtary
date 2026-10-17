@@ -13,6 +13,12 @@ class LLMSettings {
   /// Max exploit-loop iterations for generic/no-CVE findings. Default 15.
   final int maxIterationsNoCve;
 
+  /// Part 4 (contextual pre-validation filter, Level A): when true, the analyzer
+  /// drops LOW-confidence findings whose platform is categorically absent from
+  /// the detected stack (e.g. Kerberos/Docker/AWS on a WordPress+mailcow host)
+  /// BEFORE they enter the report/validation. Default false = current behaviour.
+  final bool contextualFilterRecon;
+
   LLMSettings({
     required this.provider,
     this.baseUrl,
@@ -23,6 +29,7 @@ class LLMSettings {
     this.timeoutSeconds = 180,
     this.maxIterationsWithCve = 30,
     this.maxIterationsNoCve = 15,
+    this.contextualFilterRecon = false,
   });
 
   Map<String, dynamic> toJson() => {
@@ -35,6 +42,7 @@ class LLMSettings {
     'timeoutSeconds': timeoutSeconds,
     'maxIterationsWithCve': maxIterationsWithCve,
     'maxIterationsNoCve': maxIterationsNoCve,
+    'contextualFilterRecon': contextualFilterRecon,
   };
 
   factory LLMSettings.fromJson(Map<String, dynamic> json) => LLMSettings(
@@ -47,6 +55,7 @@ class LLMSettings {
     timeoutSeconds: json['timeoutSeconds'] as int? ?? 180,
     maxIterationsWithCve: json['maxIterationsWithCve'] as int? ?? 30,
     maxIterationsNoCve: json['maxIterationsNoCve'] as int? ?? 15,
+    contextualFilterRecon: json['contextualFilterRecon'] as bool? ?? false,
   );
 
   factory LLMSettings.defaultSettings() => LLMSettings(provider: LLMProvider.none, modelName: '');
