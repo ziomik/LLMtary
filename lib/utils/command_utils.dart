@@ -2,6 +2,33 @@
 ///
 /// Extracted from exploit_executor.dart to keep the orchestration loop clean.
 class CommandUtils {
+  /// Whitespace- (and optionally case-) tolerant grounding check: is [quote]
+  /// present in [haystack] after collapsing every run of whitespace (spaces,
+  /// tabs, newlines) to a single space and trimming? Used to verify an LLM's
+  /// `evidence_quote` against the source data (device JSON or command output).
+  ///
+  /// A raw `haystack.contains(quote)` was far too strict: the model reflows
+  /// whitespace and newlines when it "copies" a quote, so a single extra space
+  /// or a `\n` vs ` ` difference sent otherwise-solid findings to LOW (observed:
+  /// all 54 findings downgraded at once). This collapses that noise so grounding
+  /// checks the CONTENT, not the exact byte layout. It does not loosen content
+  /// matching: the quote's characters must still all appear, in order.
+  ///
+  /// [caseSensitive] false (default) for recon/analysis grounding, where case is
+  /// irrelevant ("Elasticsearch" vs "elasticsearch"); true for exploit-proof
+  /// verification, where the literal token (e.g. `uid=0(root)`) is the evidence.
+  static bool quoteGroundedIn(String quote, String haystack,
+      {bool caseSensitive = false}) {
+    String norm(String s) {
+      final collapsed = s.replaceAll(RegExp(r'\s+'), ' ').trim();
+      return caseSensitive ? collapsed : collapsed.toLowerCase();
+    }
+
+    final q = norm(quote);
+    if (q.isEmpty) return false;
+    return norm(haystack).contains(q);
+  }
+
   /// Classify a command into a high-level approach category.
   /// Used for semantic repetition detection (e.g. "tried 3 curl requests to same endpoint").
   static String classifyApproach(String command) {
