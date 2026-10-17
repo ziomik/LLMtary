@@ -12,6 +12,10 @@ import 'command_executor.dart';
 import 'environment_discovery.dart';
 import 'llm_service.dart';
 import 'storage_service.dart';
+import 'actions/pentest_action.dart';
+import 'actions/action_executor.dart';
+import 'actions/recon_planner.dart';
+import 'actions/session_state.dart';
 
 /// Phases of the structured recon pipeline.
 enum ReconPhase { portScan, serviceBanner, webFingerprint, dnsEnum, osDetect }
@@ -439,6 +443,14 @@ class ReconService {
       scopeNotes: scopeNotes,
     );
 
+    // Part 4 (planner-executor): typed, in-memory session state for the
+    // schema-constrained action path. Only allocated when the flag is on;
+    // the free-text path never touches it.
+    final SessionState? plannerState = settings.plannerExecutorRecon
+        ? SessionState(target: address, goal: 'Reconnaissance of $address')
+        : null;
+    PentestAction? lastPlannedAction;
+
     for (int iteration = 0; iteration < effectiveMaxIter; iteration++) {
       // Check for cancellation at the top of each iteration.
       if (_cancelRequested) {
@@ -611,31 +623,53 @@ Do NOT propose another port scan variant. Instead:
       // Snapshot findings for next iteration's delta computation
       previousFindings = json.decode(json.encode(findings)) as Map<String, dynamic>;
 
-      String response;
-      try {
-        response = await llmService.sendMessage(settings, prompt,
-            systemPromptOverride: reconSystemPrompt,
-            onTokensUsed: onTokensUsed)
-            .timeout(_llmIterationTimeout);
-      } on TimeoutException {
-        onProgress?.call('[$address] LLM call timed out (iteration ${iteration + 1})');
-        historyEntries.add(_HistoryEntry(iteration: iteration + 1, command: '(LLM call)', summary: 'LLM call timed out'));
-        consecutiveFailures++;
-        timeoutCount++;
-        if (consecutiveFailures >= 3) { exhaustedOptions = true; break; }
-        continue;
-      } catch (e) {
-        onProgress?.call('[$address] LLM error: $e');
-        historyEntries.add(_HistoryEntry(iteration: iteration + 1, command: '(LLM call)', summary: 'LLM error: $e'));
-        consecutiveFailures++;
-        if (e.toString().contains('TimeoutException') || e.toString().contains('timed out')) {
-          timeoutCount++;
+      // Part 4: when the planner-executor flag is on, first try to obtain a
+      // TYPED action (schema-constrained) and derive its command. On any
+      // failure this returns null and we fall through to the free-text path,
+      // so there is no regression.
+      lastPlannedAction = null;
+      Map<String, dynamic>? decision;
+      if (plannerState != null) {
+        final planned = await ReconPlanner.decide(
+          llmService: llmService,
+          settings: settings,
+          state: plannerState,
+          timeout: _llmIterationTimeout,
+        );
+        if (planned != null) {
+          decision = planned.decision;
+          lastPlannedAction = planned.action;
+          onProgress?.call('[$address] Planner chose: ${planned.action}');
         }
-        if (consecutiveFailures >= 3) { exhaustedOptions = true; break; }
-        continue;
       }
 
-      final decision = _parseJson(response);
+      if (decision == null) {
+        String response;
+        try {
+          response = await llmService.sendMessage(settings, prompt,
+              systemPromptOverride: reconSystemPrompt,
+              onTokensUsed: onTokensUsed)
+              .timeout(_llmIterationTimeout);
+        } on TimeoutException {
+          onProgress?.call('[$address] LLM call timed out (iteration ${iteration + 1})');
+          historyEntries.add(_HistoryEntry(iteration: iteration + 1, command: '(LLM call)', summary: 'LLM call timed out'));
+          consecutiveFailures++;
+          timeoutCount++;
+          if (consecutiveFailures >= 3) { exhaustedOptions = true; break; }
+          continue;
+        } catch (e) {
+          onProgress?.call('[$address] LLM error: $e');
+          historyEntries.add(_HistoryEntry(iteration: iteration + 1, command: '(LLM call)', summary: 'LLM error: $e'));
+          consecutiveFailures++;
+          if (e.toString().contains('TimeoutException') || e.toString().contains('timed out')) {
+            timeoutCount++;
+          }
+          if (consecutiveFailures >= 3) { exhaustedOptions = true; break; }
+          continue;
+        }
+
+        decision = _parseJson(response);
+      }
 
       if (decision['action'] == 'CONCLUDE') {
         final useful = decision['host_useful'] == true;
@@ -823,6 +857,12 @@ Do NOT propose another port scan variant. Instead:
 
       final output = (result['output'] as String? ?? '').trim();
       final exitCode = result['exitCode'] ?? -1;
+
+      // Part 4: record a typed observation into the in-memory session state so
+      // the next planner step reasons over structured state, not raw history.
+      if (plannerState != null && lastPlannedAction != null) {
+        plannerState.record(ActionExecutor.observe(lastPlannedAction, result));
+      }
 
       // Persist to DB now that we have the output
       if (projectId > 0 && targetId > 0) {

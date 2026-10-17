@@ -13,6 +13,12 @@ class LLMSettings {
   /// Max exploit-loop iterations for generic/no-CVE findings. Default 15.
   final int maxIterationsNoCve;
 
+  /// Part 4 (planner-executor): when true, the recon loop asks the model for a
+  /// TYPED action (schema-constrained) and derives the command deterministically
+  /// instead of accepting a free-text command. Falls back to the free-text path
+  /// for any unsupported/unparseable action. Default false = current behaviour.
+  final bool plannerExecutorRecon;
+
   LLMSettings({
     required this.provider,
     this.baseUrl,
@@ -23,6 +29,7 @@ class LLMSettings {
     this.timeoutSeconds = 180,
     this.maxIterationsWithCve = 30,
     this.maxIterationsNoCve = 15,
+    this.plannerExecutorRecon = false,
   });
 
   Map<String, dynamic> toJson() => {
@@ -35,6 +42,7 @@ class LLMSettings {
     'timeoutSeconds': timeoutSeconds,
     'maxIterationsWithCve': maxIterationsWithCve,
     'maxIterationsNoCve': maxIterationsNoCve,
+    'plannerExecutorRecon': plannerExecutorRecon,
   };
 
   factory LLMSettings.fromJson(Map<String, dynamic> json) => LLMSettings(
@@ -47,6 +55,7 @@ class LLMSettings {
     timeoutSeconds: json['timeoutSeconds'] as int? ?? 180,
     maxIterationsWithCve: json['maxIterationsWithCve'] as int? ?? 30,
     maxIterationsNoCve: json['maxIterationsNoCve'] as int? ?? 15,
+    plannerExecutorRecon: json['plannerExecutorRecon'] as bool? ?? false,
   );
 
   factory LLMSettings.defaultSettings() => LLMSettings(provider: LLMProvider.none, modelName: '');
