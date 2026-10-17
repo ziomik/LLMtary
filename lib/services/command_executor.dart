@@ -8,6 +8,7 @@ import '../database/database_helper.dart';
 import '../utils/json_parser.dart';
 import '../utils/output_sanitizer.dart';
 import 'llm_service.dart';
+import 'auto_tuner.dart';
 import 'tool_manager.dart';
 
 // Re-export tool_manager types so existing callers don't need to change imports
@@ -1865,6 +1866,16 @@ Respond ONLY with valid JSON:
       final recentLines = <String>[];
       var lastOutputAt = DateTime.now();
 
+      // Part 3: per-tool idle timeout from auto-tuning (override > tuned >
+      // the _idleOutputTimeout default). Opportunistic, throttled refresh;
+      // the lookup is synchronous and falls back to the constant default until
+      // enough samples exist, so behaviour is unchanged until data accumulates.
+      final idleTool = command.trim().split(RegExp(r'\s+')).first;
+      AutoTuner.instance.maybeRefresh();
+      final idleLimit = Duration(
+          seconds: AutoTuner.instance
+              .idleTimeoutSecondsFor(idleTool, defaultSec: _idleOutputTimeout.inSeconds));
+
       // Idle-output watchdog (see _idleOutputTimeout doc comment above): checked
       // on a short interval so a hang is caught within ~10s of crossing the
       // threshold instead of waiting for the full 30-minute hard cap below.
@@ -1874,7 +1885,7 @@ Respond ONLY with valid JSON:
           return;
         }
         final silentFor = DateTime.now().difference(lastOutputAt);
-        if (silentFor > _idleOutputTimeout) {
+        if (silentFor > idleLimit) {
           killed = true;
           killReason = 'idle-timeout: no output for ${silentFor.inSeconds}s '
               '(likely network-hung: connected but target never responded)';
