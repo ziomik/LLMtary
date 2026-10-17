@@ -620,6 +620,10 @@ Raise confidence to HIGH for any finding where these credentials directly enable
 
   Future<void> loadLLMSettings() async {
     final currentProvider = await DatabaseHelper.getSetting('current_provider');
+    // Part 4 contextual filter: a global on/off (not per-provider), stored in
+    // the settings table like require_approval. Read once here so the loaded
+    // LLMSettings carries it; without this the flag stayed stuck at its default.
+    final cfr = await DatabaseHelper.getSetting(SettingsKeys.contextualFilterRecon) == 'true';
     if (currentProvider != null) {
       final providerSettings = await DatabaseHelper.getProviderSettings(currentProvider);
       if (providerSettings != null) {
@@ -631,6 +635,7 @@ Raise confidence to HIGH for any finding where these credentials directly enable
           temperature: (providerSettings['temperature'] as num?)?.toDouble() ?? 0.22,
           maxTokens: providerSettings['maxTokens'] as int? ?? 32000,
           timeoutSeconds: providerSettings['timeoutSeconds'] as int? ?? 180,
+          contextualFilterRecon: cfr,
         );
       }
     }
@@ -640,6 +645,8 @@ Raise confidence to HIGH for any finding where these credentials directly enable
   Future<void> updateLLMSettings(LLMSettings settings) async {
     _llmSettings = settings;
     await DatabaseHelper.saveSetting('current_provider', settings.provider.name);
+    await DatabaseHelper.saveSetting(
+        SettingsKeys.contextualFilterRecon, settings.contextualFilterRecon.toString());
     await DatabaseHelper.saveProviderSettings(settings.provider.name, {
       'baseUrl': settings.baseUrl,
       'apiKey': settings.apiKey,

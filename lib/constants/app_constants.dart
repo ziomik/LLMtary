@@ -28,6 +28,9 @@ class SettingsKeys {
   static const apiKey = 'apiKey';
   static const storageBasePath = 'storage_base_path';
   static const String maxIterations = 'maxIterations';
+  /// Part 4 contextual filter (global, like requireApproval). Stored as
+  /// 'true'/'false' in the settings table; read by loadLLMSettings.
+  static const contextualFilterRecon = 'contextual_filter_recon';
 }
 
 /// Default configuration values.

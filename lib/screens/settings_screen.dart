@@ -829,8 +829,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
       timeoutSeconds: _timeoutSeconds,
       maxIterationsWithCve: _maxIterationsWithCve,
       maxIterationsNoCve: _maxIterationsNoCve,
+      // Preserve the global contextual-filter flag — this screen has no toggle
+      // for it yet, so don't reset it to the default on save.
+      contextualFilterRecon: context.read<AppState>().llmSettings.contextualFilterRecon,
     );
-    
+
     context.read<AppState>().updateLLMSettings(settings);
     Navigator.pop(context);
   }
