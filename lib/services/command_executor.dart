@@ -1547,6 +1547,49 @@ Respond ONLY with valid JSON:
     }
   }
 
+  /// Part 2 (auto-tuning data): one JSONL record per executed command to
+  /// command_metrics.jsonl (alongside idle_kills.jsonl). Captures per-tool
+  /// duration, outcome, exit code, output size and kill category — the raw
+  /// material part 3 needs to auto-tune per-tool thresholds (idle timeout,
+  /// command timeout) once enough samples exist. Fire-and-forget, fail-silent:
+  /// metrics must never block or fail a command.
+  static Future<void> _logCommandMetric(
+    String command,
+    DateTime start, {
+    required String outcome, // ok | nonzero | killed | timeout | error
+    required int exitCode,
+    String? killReason,
+    int outBytes = 0,
+  }) async {
+    try {
+      final appDir = await getApplicationSupportDirectory();
+      final logPath = p.join(appDir.path, 'command_metrics.jsonl');
+      final parts = command.trim().split(RegExp(r'\s+'));
+      final tool = parts.isNotEmpty ? parts.first : 'unknown';
+      final record = jsonEncode({
+        'timestamp': DateTime.now().toIso8601String(),
+        'tool': tool,
+        'durationMs': DateTime.now().difference(start).inMilliseconds,
+        'outcome': outcome,
+        'exitCode': exitCode,
+        if (killReason != null) 'killCategory': killCategory(killReason),
+        'outputBytes': outBytes,
+        'command': command.length > 200 ? '${command.substring(0, 200)}...' : command,
+      });
+      await File(logPath).writeAsString('$record\n', mode: FileMode.append);
+    } catch (_) {
+      // Non-fatal — tuning data only, never block the actual command result.
+    }
+  }
+
+  /// Coarse category for a kill reason, for per-tool kill-rate stats.
+  static String killCategory(String reason) {
+    if (reason.startsWith('idle-timeout')) return 'idle';
+    if (reason.contains('Repetitive')) return 'repetitive';
+    if (reason.contains('Output exceeded')) return 'output-cap';
+    return 'other';
+  }
+
   /// Write (or overwrite) a thin sudo wrapper at a fixed path in /tmp so that
   /// Quote [s] as a single POSIX shell token, safe against injection: wrap in
   /// single quotes and escape embedded single quotes as '\''. Used wherever an
@@ -1809,6 +1852,7 @@ Respond ONLY with valid JSON:
 
   static Future<CommandResult> _executeInShell(String command) async {
     Process? process;
+    final cmdStart = DateTime.now(); // part 2: per-command metric (duration, outcome)
     try {
       process = await Process.start('/bin/bash', ['-c', command],
           workingDirectory: Directory.systemTemp.path);
@@ -1899,18 +1943,24 @@ Respond ONLY with valid JSON:
         if (killed) {
           final reason = killReason ?? 'unknown';
           final isIdle = reason.startsWith('idle-timeout');
+          _logCommandMetric(command, cmdStart,
+              outcome: 'killed', exitCode: -1, killReason: reason, outBytes: totalBytes);
           return CommandResult(-1, stdoutBuffer.toString(),
               'KILLED: $reason. ${isIdle ? 'The command was terminated after producing no output for this long. This is usually a network hang (connected but the target never responded), but some tools are legitimately silent for a while (loading large templates/wordlists, slow DNS). If this tool can genuinely take a long time with no output, retry with an explicit verbose/progress flag or a shorter, more targeted scope (smaller wordlist, narrower options); otherwise try a different tool or approach instead of repeating the identical command.' : 'The command was producing excessive or repetitive output and was terminated.'}');
         }
+        _logCommandMetric(command, cmdStart,
+            outcome: exitCode == 0 ? 'ok' : 'nonzero', exitCode: exitCode, outBytes: totalBytes);
         return CommandResult(exitCode, stdoutBuffer.toString(), stderrBuffer.toString());
       } finally {
         idleWatchdog.cancel();
       }
     } on TimeoutException {
       if (process != null) await _killProcessTree(process);
+      _logCommandMetric(command, cmdStart, outcome: 'timeout', exitCode: -1);
       return CommandResult(-1, "", "Command timed out.");
     } catch (e) {
       if (process != null) await _killProcessTree(process);
+      _logCommandMetric(command, cmdStart, outcome: 'error', exitCode: -1);
       return CommandResult(-1, "", "Error: $e");
     }
   }
