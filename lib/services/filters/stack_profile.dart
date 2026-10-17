@@ -65,10 +65,13 @@ class StackProfile {
   bool get solid => fingerprintedPorts >= 1 || technologyCount >= 1;
 
   // ---- detection tables (lower-case) ----
-  static const _winAdPorts = {88, 389, 636, 464, 3268, 3269, 5985, 5986, 139};
-  static const _winAdServices = {
-    'kerberos', 'ldap', 'microsoft-ds', 'netbios-ssn', 'msrpc', 'winrm', 'ldaps'
-  };
+  // SMB (445/139, nmap `microsoft-ds` / `netbios-ssn`) is NOT evidence of Active
+  // Directory: Samba on Linux and standalone Windows hosts expose it too. It only
+  // marks the [StackAxis.smb] axis. Field case (southfront.press, Linux + Samba):
+  // 445 open made AD "present", so 13 HIGH Kerberos/AD findings anchored only on
+  // "port 445/tcp open" were judged applicable and survived the filter.
+  static const _winAdPorts = {88, 389, 636, 464, 3268, 3269, 5985, 5986};
+  static const _winAdServices = {'kerberos', 'ldap', 'msrpc', 'winrm', 'ldaps'};
   static const _winAdKeywords = [
     'active directory', 'kerberos', 'domain controller', 'winrm', 'netlogon'
   ];

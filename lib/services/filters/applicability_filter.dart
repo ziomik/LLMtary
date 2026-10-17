@@ -74,7 +74,8 @@ class ApplicabilityFilter {
       'dcsync', 'kerberoast', 'as-rep', 'pass-the-hash', 'winrm', ' wmi ',
       'netlogon', 'rbcd', 'unconstrained delegation', 'constrained delegation',
       'laps credential', 'shadow credential', 'smb relay', 'print spooler',
-      'ldap null bind',
+      'ldap null bind', 'dacl', 'adcs', 'ad cs', 'adc certificate',
+      'certificate services', 'ntlm relay', 'golden ticket', 'silver ticket',
     ], StackAxis.windowsAd),
     _Signature([
       'docker api', 'docker', 'kubernetes', 'k8s', 'kubelet', 'etcd',

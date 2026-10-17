@@ -183,6 +183,77 @@ void main() {
     });
   });
 
+  // Field case (hydra, 17/10): the real southfront.press also exposes SMB
+  // (Samba on Linux). The model emitted 13 AD/Kerberos findings with HIGH
+  // confidence anchored only on "port 445/tcp open". SMB must NOT imply AD.
+  group('SMB is not Active Directory (southfront + Samba)', () {
+    const samba = '''
+{
+  "os": "Linux",
+  "open_ports": [
+    {"port": 80, "service": "http"},
+    {"port": 443, "service": "https", "product": "nginx 1.29.1"},
+    {"port": 22, "service": "ssh"},
+    {"port": 25, "service": "smtp"},
+    {"port": 139, "service": "netbios-ssn"},
+    {"port": 445, "service": "microsoft-ds"}
+  ],
+  "technologies": "wordpress, php, nginx"
+}
+''';
+    // Titles from the live run, all HIGH, all with evidence "port 445/tcp open".
+    const adHigh = [
+      'LDAP Null Bind',
+      'AS-REP Roasting',
+      'Kerberoasting',
+      'ADC Certificate Misconfigurations',
+      'ACL/DACL Abuse',
+      'Kerberos Delegation',
+      'Shadow Credentials',
+    ];
+
+    test('445/139 mark SMB only, never Windows AD', () {
+      final s = StackProfile.fromDeviceJson(samba);
+      expect(s.has(StackAxis.smb), isTrue);
+      expect(s.has(StackAxis.windowsAd), isFalse);
+      expect(s.solid, isTrue);
+    });
+
+    test('HIGH AD findings are dropped with dropHighCategorical', () {
+      final s = StackProfile.fromDeviceJson(samba);
+      for (final f in adHigh) {
+        final o = ApplicabilityFilter.decide(
+            text: '$f Cloud:Network Security',
+            confidence: 'HIGH',
+            stack: s,
+            dropHighCategorical: true);
+        expect(o.decision, FilterDecision.drop, reason: f);
+        expect(o.requiredAxis, StackAxis.windowsAd, reason: f);
+        expect(o.contradiction, isTrue, reason: f);
+      }
+    });
+
+    test('without the opt-in, HIGH AD stays kept but flagged', () {
+      final s = StackProfile.fromDeviceJson(samba);
+      final o = ApplicabilityFilter.decide(
+          text: 'Kerberoasting', confidence: 'HIGH', stack: s);
+      expect(o.decision, FilterDecision.keep);
+      expect(o.contradiction, isTrue);
+    });
+
+    test('the SMB finding itself and generic spraying are kept', () {
+      final s = StackProfile.fromDeviceJson(samba);
+      for (final f in ['Externally Exposed SMB Service', 'Password Spraying']) {
+        expect(
+            ApplicabilityFilter.decide(
+                    text: f, confidence: 'HIGH', stack: s, dropHighCategorical: true)
+                .decision,
+            FilterDecision.keep,
+            reason: f);
+      }
+    });
+  });
+
   // The filter is GENERIC/capability-driven, NOT tuned for southfront: the SAME
   // finding flips verdict based on what recon actually detected. A finding that
   // is foreign (dropped) on WordPress+mail is APPLICABLE (kept) on a target
