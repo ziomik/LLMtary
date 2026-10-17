@@ -83,7 +83,7 @@ class ApplicabilityFilter {
     _Signature([
       'imds', 'iam role', 'execution role', 'function url', 'lambda',
       ' ec2', ' aws', 'gcp ', 'azure', 'publicly accessible storage',
-      'instance metadata',
+      'storage bucket', 's3 bucket', 'blob storage', 'instance metadata',
     ], StackAxis.cloud),
     _Signature(['elasticsearch', 'kibana'], StackAxis.elasticsearch),
     _Signature([
@@ -93,6 +93,13 @@ class ApplicabilityFilter {
       'port 445', 'smb service', 'externally exposed smb', 'microsoft-ds',
       'netbios',
     ], StackAxis.smb),
+    _Signature([
+      ' rmi', 'iiop', 'jndi', 'jboss', 'weblogic', 'websphere', 'coldfusion',
+      'java deserialization', 'java serialization', 'action message format', ' amf ',
+    ], StackAxis.javaMiddleware),
+    _Signature([
+      'activemq', 'rabbitmq', 'kafka', 'amqp', 'message broker', ' jms ', 'stomp',
+    ], StackAxis.messageBroker),
   ];
 
   /// Classify a finding's text against the stack.
@@ -126,13 +133,30 @@ class ApplicabilityFilter {
     required String text,
     required String confidence,
     required StackProfile stack,
+    bool dropHighCategorical = false,
   }) {
     final c = classify(text, stack);
     final conf = confidence.toUpperCase();
 
     switch (c.verdict) {
       case Applicability.inapplicableCategorical:
-        if (conf == 'HIGH') {
+        // Field evidence (southfront): the model assigns HIGH/CRITICAL confidence to
+        // categorically-impossible findings (K8s/RMI/IAM on a WordPress+PHP+mail host).
+        // On a SOLID stack that model confidence is itself a hallucination signal, so
+        // when dropHighCategorical is on we drop regardless of confidence — but we flag
+        // a high-confidence drop as a contradiction and log it, so nothing is lost silently.
+        final isHigh = conf == 'HIGH';
+        if (dropHighCategorical) {
+          return FilterOutcome(
+            decision: FilterDecision.drop,
+            applicability: c.verdict,
+            requiredAxis: c.requiredAxis,
+            contradiction: isHigh,
+            reason: '${isHigh ? 'HIGH-confidence but ' : '$conf-confidence and '}'
+                '${c.reason} — dropped (dropHighCategorical)',
+          );
+        }
+        if (isHigh) {
           return FilterOutcome(
             decision: FilterDecision.keep,
             applicability: c.verdict,

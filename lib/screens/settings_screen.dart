@@ -832,6 +832,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       // Preserve the global contextual-filter flag — this screen has no toggle
       // for it yet, so don't reset it to the default on save.
       contextualFilterRecon: context.read<AppState>().llmSettings.contextualFilterRecon,
+      contextualFilterDropHighCategorical:
+          context.read<AppState>().llmSettings.contextualFilterDropHighCategorical,
     );
 
     context.read<AppState>().updateLLMSettings(settings);

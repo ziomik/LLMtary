@@ -18,6 +18,8 @@ enum StackAxis {
   mail, // SMTP/POP3/IMAP (e.g. mailcow)
   ssh,
   database,
+  javaMiddleware, // Java app servers / RMI / IIOP / JMX / deserialization / AMF
+  messageBroker, // ActiveMQ / RabbitMQ / Kafka / AMQP / STOMP / JMS
 }
 
 /// A deterministic, grounded summary of a target's stack, built ONLY from real
@@ -101,6 +103,16 @@ class StackProfile {
   static const _dbPorts = {3306, 5432, 1433, 27017, 6379, 5984};
   static const _dbServices = {'mysql', 'postgresql', 'ms-sql', 'mssql', 'mongodb', 'redis', 'couchdb'};
 
+  static const _javaPorts = {1099, 1098, 7001, 8686, 8009, 9990, 4848, 8161};
+  static const _javaServices = {'rmiregistry', 'java-rmi', 'jmx', 'jboss', 'weblogic', 'ajp13'};
+  static const _javaKeywords = [
+    'jboss', 'weblogic', 'websphere', 'glassfish', 'coldfusion', 'java rmi', 'rmiregistry'
+  ];
+
+  static const _brokerPorts = {61616, 5672, 9092, 61613, 1883, 15672, 5671, 8883};
+  static const _brokerServices = {'amqp', 'kafka', 'activemq', 'rabbitmq', 'stomp', 'mqtt'};
+  static const _brokerKeywords = ['activemq', 'rabbitmq', 'kafka', 'amqp'];
+
   /// Build a profile from a device JSON string (same shape the recon pipeline
   /// stores and the analyzer consumes).
   static StackProfile fromDeviceJson(String deviceJson) {
@@ -149,6 +161,10 @@ class StackProfile {
       mark(StackAxis.web, _webPorts, _webServices);
       mark(StackAxis.mail, _mailPorts, _mailServices);
       mark(StackAxis.database, _dbPorts, _dbServices);
+      mark(StackAxis.javaMiddleware, _javaPorts, _javaServices);
+      mark(StackAxis.messageBroker, _brokerPorts, _brokerServices);
+      if (_javaKeywords.any(banner.contains)) present.add(StackAxis.javaMiddleware);
+      if (_brokerKeywords.any(banner.contains)) present.add(StackAxis.messageBroker);
       if (port == 22 || service.contains('ssh')) present.add(StackAxis.ssh);
 
       // banner-based orchestration/es hints
@@ -164,6 +180,8 @@ class StackProfile {
     if (_cloudKeywords.any(haystack.contains)) present.add(StackAxis.cloud);
     if (_esKeywords.any(haystack.contains)) present.add(StackAxis.elasticsearch);
     if (_icsKeywords.any(haystack.contains)) present.add(StackAxis.icsModbus);
+    if (_javaKeywords.any(haystack.contains)) present.add(StackAxis.javaMiddleware);
+    if (_brokerKeywords.any(haystack.contains)) present.add(StackAxis.messageBroker);
 
     // technologies strings also imply web stack
     final techCount = techs.isEmpty ? 0 : techs.split(RegExp(r'[,\s]+')).where((x) => x.isNotEmpty).length;

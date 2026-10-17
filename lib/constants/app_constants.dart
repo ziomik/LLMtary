@@ -31,6 +31,7 @@ class SettingsKeys {
   /// Part 4 contextual filter (global, like requireApproval). Stored as
   /// 'true'/'false' in the settings table; read by loadLLMSettings.
   static const contextualFilterRecon = 'contextual_filter_recon';
+  static const contextualFilterDropHighCategorical = 'contextual_filter_drop_high_categorical';
 }
 
 /// Default configuration values.

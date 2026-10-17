@@ -624,6 +624,7 @@ Raise confidence to HIGH for any finding where these credentials directly enable
     // the settings table like require_approval. Read once here so the loaded
     // LLMSettings carries it; without this the flag stayed stuck at its default.
     final cfr = await DatabaseHelper.getSetting(SettingsKeys.contextualFilterRecon) == 'true';
+    final cfdhc = await DatabaseHelper.getSetting(SettingsKeys.contextualFilterDropHighCategorical) == 'true';
     if (currentProvider != null) {
       final providerSettings = await DatabaseHelper.getProviderSettings(currentProvider);
       if (providerSettings != null) {
@@ -636,6 +637,7 @@ Raise confidence to HIGH for any finding where these credentials directly enable
           maxTokens: providerSettings['maxTokens'] as int? ?? 32000,
           timeoutSeconds: providerSettings['timeoutSeconds'] as int? ?? 180,
           contextualFilterRecon: cfr,
+          contextualFilterDropHighCategorical: cfdhc,
         );
       }
     }
@@ -647,6 +649,8 @@ Raise confidence to HIGH for any finding where these credentials directly enable
     await DatabaseHelper.saveSetting('current_provider', settings.provider.name);
     await DatabaseHelper.saveSetting(
         SettingsKeys.contextualFilterRecon, settings.contextualFilterRecon.toString());
+    await DatabaseHelper.saveSetting(SettingsKeys.contextualFilterDropHighCategorical,
+        settings.contextualFilterDropHighCategorical.toString());
     await DatabaseHelper.saveProviderSettings(settings.provider.name, {
       'baseUrl': settings.baseUrl,
       'apiKey': settings.apiKey,

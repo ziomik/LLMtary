@@ -19,6 +19,12 @@ class LLMSettings {
   /// BEFORE they enter the report/validation. Default false = current behaviour.
   final bool contextualFilterRecon;
 
+  /// Part 4 (contextual filter, stronger): when true, a categorically-foreign
+  /// finding on a SOLID stack is dropped REGARDLESS of the model's confidence
+  /// (field evidence shows the model inflates confidence on impossible findings).
+  /// High-confidence drops are logged as contradictions. Default false.
+  final bool contextualFilterDropHighCategorical;
+
   LLMSettings({
     required this.provider,
     this.baseUrl,
@@ -30,6 +36,7 @@ class LLMSettings {
     this.maxIterationsWithCve = 30,
     this.maxIterationsNoCve = 15,
     this.contextualFilterRecon = false,
+    this.contextualFilterDropHighCategorical = false,
   });
 
   Map<String, dynamic> toJson() => {
@@ -43,6 +50,7 @@ class LLMSettings {
     'maxIterationsWithCve': maxIterationsWithCve,
     'maxIterationsNoCve': maxIterationsNoCve,
     'contextualFilterRecon': contextualFilterRecon,
+    'contextualFilterDropHighCategorical': contextualFilterDropHighCategorical,
   };
 
   factory LLMSettings.fromJson(Map<String, dynamic> json) => LLMSettings(
@@ -56,6 +64,7 @@ class LLMSettings {
     maxIterationsWithCve: json['maxIterationsWithCve'] as int? ?? 30,
     maxIterationsNoCve: json['maxIterationsNoCve'] as int? ?? 15,
     contextualFilterRecon: json['contextualFilterRecon'] as bool? ?? false,
+    contextualFilterDropHighCategorical: json['contextualFilterDropHighCategorical'] as bool? ?? false,
   );
 
   factory LLMSettings.defaultSettings() => LLMSettings(provider: LLMProvider.none, modelName: '');

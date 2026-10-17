@@ -281,4 +281,63 @@ void main() {
       expect(o.applicability, Applicability.uncertain);
     });
   });
+
+  group('enterprise middleware / broker / storage (expanded signatures)', () {
+    late StackProfile sf;
+    setUp(() {
+      sf = StackProfile.fromDeviceJson(
+          '{"os":"Linux","open_ports":[{"port":443,"service":"https","product":"nginx"},'
+          '{"port":25,"service":"smtp"}],"technologies":"wordpress, php"}');
+    });
+    test('Java RMI/IIOP, ActiveMQ, AMF (LOW) are dropped on a WP+PHP stack', () {
+      for (final f in [
+        'Java RMI / IIOP Unauthenticated Deserialization',
+        'ActiveMQ / RabbitMQ / Kafka Unauthenticated Access',
+        'AMF (Action Message Format) Deserialization',
+      ]) {
+        expect(ApplicabilityFilter.decide(text: f, confidence: 'LOW', stack: sf).decision,
+            FilterDecision.drop, reason: f);
+      }
+    });
+    test('PHP deserialization is NOT dropped (only Java is foreign)', () {
+      expect(ApplicabilityFilter.decide(
+              text: 'PHP Object Injection via unserialize', confidence: 'LOW', stack: sf).decision,
+          FilterDecision.keep);
+    });
+    test('real Java target keeps the RMI finding', () {
+      final java = StackProfile.fromDeviceJson(
+          '{"os":"Linux","open_ports":[{"port":1099,"service":"java-rmi"},'
+          '{"port":8080,"service":"http","product":"jboss"}]}');
+      expect(java.has(StackAxis.javaMiddleware), isTrue);
+      expect(ApplicabilityFilter.decide(
+              text: 'Java RMI / IIOP Unauthenticated Deserialization',
+              confidence: 'LOW', stack: java).decision,
+          FilterDecision.keep);
+    });
+  });
+
+  group('dropHighCategorical (opt-in stronger policy)', () {
+    late StackProfile sf;
+    setUp(() {
+      sf = StackProfile.fromDeviceJson(
+          '{"os":"Linux","open_ports":[{"port":443,"service":"https","product":"nginx"}],'
+          '"technologies":"wordpress, php"}');
+    });
+    test('HIGH categorical kept by default, dropped when flag on', () {
+      const f = 'Publicly Accessible Storage Buckets';
+      final off = ApplicabilityFilter.decide(text: f, confidence: 'HIGH', stack: sf);
+      expect(off.decision, FilterDecision.keep);
+      expect(off.contradiction, isTrue);
+      final on = ApplicabilityFilter.decide(
+          text: f, confidence: 'HIGH', stack: sf, dropHighCategorical: true);
+      expect(on.decision, FilterDecision.drop);
+      expect(on.contradiction, isTrue); // drop loud, logged
+    });
+    test('applicable HIGH is never dropped even with flag on', () {
+      final on = ApplicabilityFilter.decide(
+          text: 'WordPress XML-RPC Credential Attack', confidence: 'HIGH', stack: sf,
+          dropHighCategorical: true);
+      expect(on.decision, FilterDecision.keep);
+    });
+  });
 }
