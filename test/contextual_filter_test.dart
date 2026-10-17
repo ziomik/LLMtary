@@ -182,4 +182,64 @@ void main() {
       expect(kept.length, 3);
     });
   });
+
+  // The filter is GENERIC/capability-driven, NOT tuned for southfront: the SAME
+  // finding flips verdict based on what recon actually detected. A finding that
+  // is foreign (dropped) on WordPress+mail is APPLICABLE (kept) on a target
+  // whose stack really has that platform.
+  group('genericity — capability-driven, symmetric across any target', () {
+    test('real AD target keeps the Kerberos finding that southfront dropped', () {
+      final ad = StackProfile.fromDeviceJson('''
+        {"os": "Windows", "open_ports": [
+          {"port": 88, "service": "kerberos"},
+          {"port": 389, "service": "ldap"},
+          {"port": 445, "service": "microsoft-ds"},
+          {"port": 3268, "service": "ldap"}
+        ]}''');
+      expect(ad.has(StackAxis.windowsAd), isTrue);
+      // Kept here (AD present); it was dropped on the WordPress+mail stack.
+      expect(
+          ApplicabilityFilter.decide(
+                  text: 'DCSync over internet-facing Kerberos',
+                  confidence: 'LOW',
+                  stack: ad)
+              .decision,
+          FilterDecision.keep);
+      // And a cloud finding with no cloud on this AD box is still dropped.
+      expect(
+          ApplicabilityFilter.decide(
+                  text: 'Overprivileged IAM Role', confidence: 'LOW', stack: ad)
+              .decision,
+          FilterDecision.drop);
+    });
+
+    test('real cloud target keeps the AWS/IAM finding', () {
+      final cloud = StackProfile.fromDeviceJson('''
+        {"os": "Linux", "open_ports": [{"port": 443, "service": "https"}],
+         "technologies": "aws ec2",
+         "hostname": "ec2-1-2-3-4.compute.amazonaws.com"}''');
+      expect(cloud.has(StackAxis.cloud), isTrue);
+      expect(
+          ApplicabilityFilter.decide(
+                  text: 'Overprivileged IAM Role', confidence: 'LOW', stack: cloud)
+              .decision,
+          FilterDecision.keep);
+    });
+
+    test('real Kubernetes target keeps the K8s finding', () {
+      final orch = StackProfile.fromDeviceJson('''
+        {"os": "Linux", "open_ports": [
+          {"port": 6443, "service": "kubernetes"},
+          {"port": 2375, "service": "docker"}
+        ]}''');
+      expect(orch.has(StackAxis.orchestration), isTrue);
+      expect(
+          ApplicabilityFilter.decide(
+                  text: 'Publicly Accessible Kubernetes API Server',
+                  confidence: 'LOW',
+                  stack: orch)
+              .decision,
+          FilterDecision.keep);
+    });
+  });
 }
